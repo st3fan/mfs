@@ -215,7 +215,7 @@ func (volume *Volume) readAllocationBlock(allocationBlockIndex uint16) ([]byte, 
 	return buffer, nil
 }
 
-func (volume *Volume) bytesReader(allocationBlockIndex uint16, length uint32) (io.Reader, error) {
+func (volume *Volume) bytesReadSeeker(allocationBlockIndex uint16, length uint32) (io.ReadSeeker, error) {
 	data := []byte{}
 
 	if length != 0 {
@@ -242,13 +242,13 @@ func (volume *Volume) bytesReader(allocationBlockIndex uint16, length uint32) (i
 }
 
 // OpenDataFork returns a io.Reader for the file with the given index
-func (volume *Volume) OpenDataFork(fileIndex int) (io.Reader, error) {
+func (volume *Volume) OpenDataFork(fileIndex int) (io.ReadSeeker, error) {
 	file := volume.Files[fileIndex]
-	return volume.bytesReader(file.directoryEntry.StBlk, file.directoryEntry.LgLen)
+	return volume.bytesReadSeeker(file.directoryEntry.StBlk, file.directoryEntry.LgLen)
 }
 
 // OpenResourceFork returns a io.Reader for the file with the given index
-func (volume *Volume) OpenResourceFork(fileIndex int) (io.Reader, error) {
+func (volume *Volume) OpenResourceFork(fileIndex int) (io.ReadSeeker, error) {
 	file := volume.Files[fileIndex]
-	return volume.bytesReader(file.directoryEntry.RStBlk, file.directoryEntry.RLgLen)
+	return volume.bytesReadSeeker(file.directoryEntry.RStBlk, file.directoryEntry.RLgLen)
 }

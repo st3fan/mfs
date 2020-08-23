@@ -5,6 +5,7 @@
 package mfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -16,14 +17,6 @@ const (
 	maxFileNameLength   = 31 // Excluding the length byte
 	maxVolumeNameLength = 27 // Exluding the length byte
 )
-
-// Volume represents an MFS volume.
-type Volume struct {
-	r                io.ReadSeeker
-	allocationBlocks []int
-	Name             string
-	Files            []File
-}
 
 type volumeInformation struct {
 	Signature                      uint16
@@ -58,18 +51,25 @@ type fileDirectoryEntry struct {
 	Nam     [maxFileNameLength + 1]byte
 }
 
-// File represents a file on the disk
-type File struct {
-	Name           string
-	Type           string
-	Creator        string
-	Created        time.Time
-	Modified       time.Time
-	directoryEntry fileDirectoryEntry
+// Volume represents an MFS volume.
+type Volume struct {
+	r                io.ReadSeeker
+	allocationBlocks []uint16
+	Name             string
+	Files            []File
+	vi               volumeInformation
 }
 
-func readFileDirectoryEntry(r io.Reader) (fileDirectoryEntry, error) {
-	return fileDirectoryEntry{}, nil // TODO
+// File represents a file on the disk
+type File struct {
+	Name               string
+	Type               string
+	Creator            string
+	Created            time.Time
+	Modified           time.Time
+	DataForkLength     int64
+	ResourceForkLength int64
+	directoryEntry     fileDirectoryEntry
 }
 
 func pascalString(data []byte) string {
@@ -78,6 +78,14 @@ func pascalString(data []byte) string {
 		return ""
 	}
 	return string(data[1 : length+1])
+}
+
+func readByte(r io.Reader) (byte, error) {
+	buf := make([]byte, 1)
+	if _, err := r.Read(buf); err != nil {
+		return 0, err
+	}
+	return buf[0], nil
 }
 
 // NewVolume creates a new volume.
@@ -95,13 +103,34 @@ func NewVolume(r io.ReadSeeker) (*Volume, error) {
 		return nil, errors.New("Invalid volume signature")
 	}
 
-	//fmt.Printf("The disk <VideoWorks Disk 1.image> was created at <%v>", time.Unix(int64(vi.CreateDate)-2082844800, 0))
-
 	// Read the volume allocation block map
 
-	allocationBlocks := make([]int, vi.NumberOfAllocationBlocks)
+	var t byte = 0
+
+	allocationBlocks := make([]uint16, vi.NumberOfAllocationBlocks)
 	for i := 0; i < int(vi.NumberOfAllocationBlocks); i++ {
-		allocationBlocks[i] = 0 // readAllocationBlock(i)
+		if i%2 == 0 {
+			a, err := readByte(r)
+			if err != nil {
+				return nil, err
+			}
+
+			b, err := readByte(r)
+			if err != nil {
+				return nil, err
+			}
+
+			t = b
+
+			allocationBlocks[i] = (uint16(a) << 4) | (uint16(b) >> 4)
+		} else {
+			a, err := readByte(r)
+			if err != nil {
+				return nil, err
+			}
+
+			allocationBlocks[i] = (uint16(t&0x0f) << 8) | uint16(a)
+		}
 	}
 
 	// Read the file directory
@@ -119,12 +148,14 @@ func NewVolume(r io.ReadSeeker) (*Volume, error) {
 		}
 
 		files = append(files, File{
-			Name:           pascalString(fde.Nam[:]),
-			Created:        time.Unix(int64(fde.CrDat)-2082844800, 0),
-			Modified:       time.Unix(int64(fde.MdDat)-2082844800, 0),
-			Type:           string(fde.UsrWds[0:4]),
-			Creator:        string(fde.UsrWds[4:8]),
-			directoryEntry: fde,
+			Name:               pascalString(fde.Nam[:]),
+			Created:            time.Unix(int64(fde.CrDat)-2082844800, 0),
+			Modified:           time.Unix(int64(fde.MdDat)-2082844800, 0),
+			Type:               string(fde.UsrWds[0:4]),
+			Creator:            string(fde.UsrWds[4:8]),
+			DataForkLength:     int64(fde.LgLen),
+			ResourceForkLength: int64(fde.RLgLen),
+			directoryEntry:     fde,
 		})
 
 		// If we do not have enough room left in the current logical block, jump to the next one.
@@ -161,5 +192,63 @@ func NewVolume(r io.ReadSeeker) (*Volume, error) {
 		allocationBlocks: allocationBlocks,
 		Name:             pascalString(vi.VolumeName[:]),
 		Files:            files,
+		vi:               vi,
 	}, nil
+}
+
+func (volume *Volume) readAllocationBlock(allocationBlockIndex uint16) ([]byte, error) {
+	//log.Printf("Reading allocation block %v", allocationBlockIndex)
+
+	buffer := make([]byte, volume.vi.SizeOfAllocationBlocks)
+
+	offset := int64(volume.vi.DirSt+volume.vi.BlLen) * logicalBlockSize
+	offset += int64(allocationBlockIndex) * int64(volume.vi.SizeOfAllocationBlocks)
+
+	if _, err := volume.r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	if _, err := volume.r.Read(buffer); err != nil {
+		return nil, err
+	}
+
+	return buffer, nil
+}
+
+func (volume *Volume) bytesReader(allocationBlockIndex uint16, length uint32) (io.Reader, error) {
+	data := []byte{}
+
+	if length != 0 {
+		allocationBlockData, err := volume.readAllocationBlock(allocationBlockIndex)
+		if err != nil {
+			return nil, err
+		}
+
+		data = append(data, allocationBlockData...)
+		allocationBlockIndex = volume.allocationBlocks[allocationBlockIndex-2]
+
+		for allocationBlockIndex != 1 {
+			allocationBlockData, err := volume.readAllocationBlock(allocationBlockIndex)
+			if err != nil {
+				return nil, err
+			}
+
+			data = append(data, allocationBlockData...)
+			allocationBlockIndex = volume.allocationBlocks[allocationBlockIndex-2]
+		}
+	}
+
+	return bytes.NewReader(data[0:length]), nil
+}
+
+// OpenDataFork returns a io.Reader for the file with the given index
+func (volume *Volume) OpenDataFork(fileIndex int) (io.Reader, error) {
+	file := volume.Files[fileIndex]
+	return volume.bytesReader(file.directoryEntry.StBlk, file.directoryEntry.LgLen)
+}
+
+// OpenResourceFork returns a io.Reader for the file with the given index
+func (volume *Volume) OpenResourceFork(fileIndex int) (io.Reader, error) {
+	file := volume.Files[fileIndex]
+	return volume.bytesReader(file.directoryEntry.RStBlk, file.directoryEntry.RLgLen)
 }

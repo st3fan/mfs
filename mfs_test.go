@@ -5,7 +5,7 @@
 package mfs_test
 
 import (
-	"fmt"
+	"io/ioutil"
 	"os"
 	"testing"
 
@@ -53,8 +53,85 @@ func Test_Files(t *testing.T) {
 	if len(volume.Files) != 12 {
 		t.Fail()
 	}
+}
 
-	for _, file := range volume.Files {
-		fmt.Printf("%s %s %s:%-32s %v\n", file.Type, file.Creator, volume.Name, file.Name, file.Created)
+func Test_OpenDataFork(t *testing.T) {
+	volume, err := volumeFromPath("testdata/VideoWorks Disk 1.image")
+	if err != nil {
+		t.Error("Could not open volume:", err)
+	}
+
+	r, err := volume.OpenDataFork(3)
+	if err != nil {
+		t.Error("Could not open data fork:", err)
+	}
+
+	contents, err := ioutil.ReadAll(r)
+	if err != nil {
+		t.Error("Could not read all:", err)
+	}
+
+	if len(contents) != int(volume.Files[3].DataForkLength) {
+		t.Errorf("Did not read all: expected %d got %d", volume.Files[3].DataForkLength, len(contents))
+	}
+}
+
+func Test_OpenResourceFork(t *testing.T) {
+	volume, err := volumeFromPath("testdata/VideoWorks Disk 1.image")
+	if err != nil {
+		t.Error("Could not open volume:", err)
+	}
+
+	r, err := volume.OpenResourceFork(3)
+	if err != nil {
+		t.Error("Could not open data fork:", err)
+	}
+
+	contents, err := ioutil.ReadAll(r)
+	if err != nil {
+		t.Error("Could not read all:", err)
+	}
+
+	if len(contents) != int(volume.Files[3].ResourceForkLength) {
+		t.Errorf("Did not read all: expected %d got %d", volume.Files[3].ResourceForkLength, len(contents))
+	}
+}
+
+func TestReadAllFiles(t *testing.T) {
+	volume, err := volumeFromPath("testdata/VideoWorks Disk 1.image")
+	if err != nil {
+		t.Error("Could not open volume:", err)
+	}
+
+	for fileIndex := range volume.Files {
+		r, err := volume.OpenDataFork(fileIndex)
+		if err != nil {
+			t.Error("Could not open data fork:", err)
+		}
+
+		contents, err := ioutil.ReadAll(r)
+		if err != nil {
+			t.Error("Could not read all:", err)
+		}
+
+		if len(contents) != int(volume.Files[fileIndex].DataForkLength) {
+			t.Errorf("Did not read all: expected %d got %d", volume.Files[fileIndex].DataForkLength, len(contents))
+		}
+	}
+
+	for fileIndex := range volume.Files {
+		r, err := volume.OpenResourceFork(fileIndex)
+		if err != nil {
+			t.Error("Could not open data fork:", err)
+		}
+
+		contents, err := ioutil.ReadAll(r)
+		if err != nil {
+			t.Error("Could not read all:", err)
+		}
+
+		if len(contents) != int(volume.Files[fileIndex].ResourceForkLength) {
+			t.Errorf("Did not read all: expected %d got %d", volume.Files[fileIndex].ResourceForkLength, len(contents))
+		}
 	}
 }

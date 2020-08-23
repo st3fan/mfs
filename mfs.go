@@ -197,12 +197,10 @@ func NewVolume(r io.ReadSeeker) (*Volume, error) {
 }
 
 func (volume *Volume) readAllocationBlock(allocationBlockIndex uint16) ([]byte, error) {
-	//log.Printf("Reading allocation block %v", allocationBlockIndex)
-
 	buffer := make([]byte, volume.vi.SizeOfAllocationBlocks)
 
 	offset := int64(volume.vi.DirSt+volume.vi.BlLen) * logicalBlockSize
-	offset += int64(allocationBlockIndex) * int64(volume.vi.SizeOfAllocationBlocks)
+	offset += int64(allocationBlockIndex-2) * int64(volume.vi.SizeOfAllocationBlocks)
 
 	if _, err := volume.r.Seek(offset, io.SeekStart); err != nil {
 		return nil, err

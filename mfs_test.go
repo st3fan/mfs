@@ -5,6 +5,8 @@
 package mfs_test
 
 import (
+	"encoding/binary"
+	"io"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -133,5 +135,57 @@ func TestReadAllFiles(t *testing.T) {
 		if len(contents) != int(volume.Files[fileIndex].ResourceForkLength) {
 			t.Errorf("Did not read all: expected %d got %d", volume.Files[fileIndex].ResourceForkLength, len(contents))
 		}
+	}
+}
+
+func Test_ReadResourceForkHeader(t *testing.T) {
+	volume, err := volumeFromPath("testdata/VideoWorks Disk 1.image")
+	if err != nil {
+		t.Error("Could not open volume:", err)
+	}
+
+	r, err := volume.OpenResourceFork(3)
+	if err != nil {
+		t.Error("Could not open data fork:", err)
+	}
+
+	offset, err := r.Seek(0, io.SeekCurrent)
+	if err != nil {
+		t.Error("Could not seek:", err)
+	}
+	if offset != 0 {
+		t.Error("Offset is not 0")
+	}
+
+	var resourceDataOffset uint32
+	if err := binary.Read(r, binary.BigEndian, &resourceDataOffset); err != nil {
+		t.Error("Could not read:", err)
+	}
+	if resourceDataOffset != 256 {
+		t.Error("Invalid resourceDataOffset")
+	}
+
+	var resourceMapOffset uint32
+	if err := binary.Read(r, binary.BigEndian, &resourceMapOffset); err != nil {
+		t.Error("Could not read:", err)
+	}
+	if resourceMapOffset != 46084 {
+		t.Error("Invalid resourceMapOffset")
+	}
+
+	var resourceDataLength uint32
+	if err := binary.Read(r, binary.BigEndian, &resourceDataLength); err != nil {
+		t.Error("Could not read:", err)
+	}
+	if resourceDataLength != 45828 {
+		t.Error("Invalid resourceDataLength")
+	}
+
+	var resourceMapLength uint32
+	if err := binary.Read(r, binary.BigEndian, &resourceMapLength); err != nil {
+		t.Error("Could not read:", err)
+	}
+	if resourceMapLength != 626 {
+		t.Error("Invalid resourceMapLength")
 	}
 }
